@@ -14,3 +14,21 @@ jobs:
           dotnet-version: "10.0.x"
       - name: Restore, build, and test
         run: dotnet test OrderInventory.slnx --configuration Release
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Test and build the React app
+        run: |
+          npm ci
+          npm test
+          npm run build

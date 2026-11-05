@@ -104,7 +104,7 @@ public sealed class ConcurrencyApiFactory : WebApplicationFactory<Program>
         builder.UseSetting("ConnectionStrings:Default", $"Data Source={_databasePath}");
         builder.UseSetting("Jwt:SigningKey", "TestingOnlySigningKey_AtLeast32Bytes!!");
         builder.UseSetting("Seed:Enabled", "true");
-        builder.UseEnvironment("Testing");
+        builder.UseSetting("environment", "Testing");
         builder.ConfigureAppConfiguration((_, config) =>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>

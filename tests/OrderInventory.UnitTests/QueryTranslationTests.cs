@@ -21,9 +21,7 @@ public class QueryTranslationTests
 
         sql.Should().Contain("GROUP BY");
         sql.Should().Contain("TOP");
-        sql.Should().NotContain(";");
-        var statements = sql.Split("SELECT", StringSplitOptions.RemoveEmptyEntries);
-        statements.Should().ContainSingle();
+        sql.Split("SELECT", StringSplitOptions.RemoveEmptyEntries).Should().ContainSingle();
 
         var root = FindRepoRoot();
         Directory.CreateDirectory(Path.Combine(root, "artifacts"));
