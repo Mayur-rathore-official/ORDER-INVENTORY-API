@@ -1,0 +1,29 @@
+services:
+  sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "OrderInventory_Dev1!"
+    ports:
+      - "1433:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  api:
+    build: .
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Default: "Server=sql,1433;Database=OrderInventory;User Id=sa;Password=OrderInventory_Dev1!;TrustServerCertificate=True"
+      Database__Provider: SqlServer
+      Jwt__SigningKey: "DevelopmentOnlySigningKey_ChangeInProduction_32"
+      Seed__Enabled: "true"
+    ports:
+      - "8080:8080"
+    depends_on:
+      sql:
+        condition: service_healthy

@@ -52,78 +52,89 @@ public sealed class OrderService : IOrderService
             return ReplayOrConflict(replay, requestHash);
 
         var productIds = lines.Select(l => l.ProductId).ToList();
-        var products = await _db.Products
-            .Where(p => productIds.Contains(p.Id))
-            .ToListAsync(cancellationToken);
-
-        if (products.Count != productIds.Count)
-            throw new NotFoundException("One or more products were not found.");
-
-        var byId = products.ToDictionary(p => p.Id);
-        foreach (var line in lines)
-        {
-            var product = byId[line.ProductId];
-            if (!product.IsActive)
-                throw new ValidationException($"Product '{product.Sku}' is not available.");
-
-            if (product.StockQuantity < line.Quantity)
-                throw new InsufficientStockException(product.Sku, line.Quantity, product.StockQuantity);
-        }
-
-        var priorOrders = await _db.Orders.CountAsync(o => o.CustomerId == actor.UserId, cancellationToken);
-        var orderNumber = priorOrders + 1;
         var now = _clock.UtcNow;
-
-        var order = new Order
-        {
-            Id = Guid.NewGuid(),
-            CustomerId = actor.UserId,
-            Status = OrderStatus.Pending,
-            CreatedAt = now
-        };
-
-        foreach (var line in lines)
-        {
-            var product = byId[line.ProductId];
-            product.StockQuantity -= line.Quantity;
-            order.Items.Add(new OrderItem
-            {
-                Id = Guid.NewGuid(),
-                OrderId = order.Id,
-                ProductId = product.Id,
-                Product = product,
-                Quantity = line.Quantity,
-                UnitPrice = product.Price
-            });
-        }
-
-        order.SubTotal = DiscountCalculator.RoundMoney(order.Items.Sum(i => i.UnitPrice * i.Quantity));
-        var quote = DiscountCalculator.Calculate(order.SubTotal, orderNumber);
-        order.Discount = quote.Discount;
-        order.Total = quote.Total;
-
-        var customer = await _db.Users.FirstAsync(u => u.Id == actor.UserId, cancellationToken);
-        order.Customer = customer;
-
-        _db.Orders.Add(order);
-        _db.IdempotencyRecords.Add(new IdempotencyRecord
-        {
-            Id = Guid.NewGuid(),
-            CustomerId = actor.UserId,
-            Key = key,
-            RequestHash = requestHash,
-            Order = order,
-            CreatedAt = now
-        });
-
-        // Both competing requests must observe the same row version before either transaction commits.
-        await _gate.OnProductsReservedAsync(cancellationToken);
 
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            var products = await _db.Products
+                .Where(p => productIds.Contains(p.Id))
+                .ToListAsync(cancellationToken);
+
+            if (products.Count != productIds.Count)
+                throw new NotFoundException("One or more products were not found.");
+
+            var byId = products.ToDictionary(p => p.Id);
+            foreach (var line in lines)
+            {
+                var product = byId[line.ProductId];
+                if (!product.IsActive)
+                    throw new ValidationException($"Product '{product.Sku}' is not available.");
+
+                if (product.StockQuantity < line.Quantity)
+                    throw new InsufficientStockException(product.Sku, line.Quantity, product.StockQuantity);
+            }
+
+            var priorOrders = await _db.Orders.CountAsync(o => o.CustomerId == actor.UserId, cancellationToken);
+            var orderNumber = priorOrders + 1;
+
+            var order = new Order
+            {
+                Id = Guid.NewGuid(),
+                CustomerId = actor.UserId,
+                Status = OrderStatus.Pending,
+                CreatedAt = now
+            };
+
+            foreach (var line in lines)
+            {
+                var product = byId[line.ProductId];
+                product.StockQuantity -= line.Quantity;
+                order.Items.Add(new OrderItem
+                {
+                    Id = Guid.NewGuid(),
+                    OrderId = order.Id,
+                    ProductId = product.Id,
+                    Product = product,
+                    Quantity = line.Quantity,
+                    UnitPrice = product.Price
+                });
+            }
+
+            order.SubTotal = DiscountCalculator.RoundMoney(order.Items.Sum(i => i.UnitPrice * i.Quantity));
+            var quote = DiscountCalculator.Calculate(order.SubTotal, orderNumber);
+            order.Discount = quote.Discount;
+            order.Total = quote.Total;
+
+            var customer = await _db.Users.FirstAsync(u => u.Id == actor.UserId, cancellationToken);
+            order.Customer = customer;
+
+            _db.Orders.Add(order);
+            _db.IdempotencyRecords.Add(new IdempotencyRecord
+            {
+                Id = Guid.NewGuid(),
+                CustomerId = actor.UserId,
+                Key = key,
+                RequestHash = requestHash,
+                Order = order,
+                CreatedAt = now
+            });
+
+            // Both competing requests must observe the same row version before either transaction commits.
+            await _gate.OnProductsReservedAsync(cancellationToken);
+
             await _db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+
+            _logger.LogInformation(
+                "Placed order {OrderId} for customer {CustomerId}. SubTotal {SubTotal}, Discount {Discount}, Total {Total}",
+                order.Id,
+                actor.UserId,
+                order.SubTotal,
+                order.Discount,
+                order.Total);
+
+            return new PlaceOrderResult(Map(order), Replayed: false);
         }
         catch (DbUpdateConcurrencyException ex)
         {
@@ -143,16 +154,11 @@ public sealed class OrderService : IOrderService
 
             throw;
         }
-
-        _logger.LogInformation(
-            "Placed order {OrderId} for customer {CustomerId}. SubTotal {SubTotal}, Discount {Discount}, Total {Total}",
-            order.Id,
-            actor.UserId,
-            order.SubTotal,
-            order.Discount,
-            order.Total);
-
-        return new PlaceOrderResult(Map(order), Replayed: false);
+        catch
+        {
+            await SafeRollbackAsync(transaction, cancellationToken);
+            throw;
+        }
     }
 
     public Task<PagedResult<OrderResponse>> ListMineAsync(RequestActor actor, OrderListQuery query, CancellationToken cancellationToken) =>

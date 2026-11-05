@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,8 +17,23 @@ public static class DependencyInjection
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new InvalidOperationException("ConnectionStrings:Default is required. Set ConnectionStrings__Default.");
 
+        var provider = configuration["Database:Provider"] ?? "SqlServer";
         services.AddDbContext<AppDbContext>(options =>
-            options.UseSqlServer(connectionString));
+        {
+            if (provider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
+            {
+                var sqlite = new SqliteConnectionStringBuilder(connectionString)
+                {
+                    Mode = SqliteOpenMode.ReadWriteCreate,
+                    DefaultTimeout = 30
+                };
+                options.UseSqlite(sqlite.ToString());
+            }
+            else
+            {
+                options.UseSqlServer(connectionString);
+            }
+        });
 
         services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<AppDbContext>());
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();

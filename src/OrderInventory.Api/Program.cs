@@ -1,6 +1,7 @@
 using System.Text;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using OrderInventory.Api.Authentication;
@@ -129,6 +130,7 @@ app.UseSwaggerUI(options =>
 app.MapControllers();
 app.MapGet("/", () => Results.Redirect("/swagger"));
 
+if (!EF.IsDesignTime)
 {
     await using var scope = app.Services.CreateAsyncScope();
     var initializer = scope.ServiceProvider.GetRequiredService<DatabaseInitializer>();

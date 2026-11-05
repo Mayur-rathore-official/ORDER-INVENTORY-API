@@ -34,7 +34,7 @@ public sealed class DatabaseInitializer
     {
         var provider = _db.Database.ProviderName ?? string.Empty;
         if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
-            await _db.Database.MigrateAsync(cancellationToken);
+            await MigrateSqlServerAsync(cancellationToken);
         else
             await _db.Database.EnsureCreatedAsync(cancellationToken);
 
@@ -90,6 +90,24 @@ public sealed class DatabaseInitializer
         _db.Products.AddRange(CreateProducts());
         await _db.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("Seeded 1 admin, 3 customers, and 15 products");
+    }
+
+    private async Task MigrateSqlServerAsync(CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 15;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await _db.Database.MigrateAsync(cancellationToken);
+                return;
+            }
+            catch (Exception ex) when (attempt < maxAttempts && ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "SQL Server is not ready for migrations (attempt {Attempt}/{MaxAttempts})", attempt, maxAttempts);
+                await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
+            }
+        }
     }
 
     private static IEnumerable<Product> CreateProducts()
